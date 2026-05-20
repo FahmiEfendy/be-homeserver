@@ -37,7 +37,7 @@ const server = http.createServer((req, res) => {
 
         const [diskOut, tempOut] = await Promise.all([
             runCmd("df -h / | awk 'NR==2 {print $5}'"),
-            runCmd("cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null")
+            runCmd("cat /sys/class/hwmon/hwmon*/temp1_input 2>/dev/null | head -n 1")
         ]);
 
         let temp = 'N/A';
