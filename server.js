@@ -88,6 +88,9 @@ const server = http.createServer((req, res) => {
             res.writeHead(500);
             res.end(JSON.stringify({ error: 'Failed to parse docker stats' }));
         }
+    } else if (req.url === '/api/health') {
+        res.writeHead(200);
+        res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
     } else {
         console.log(`[DEBUG] 404 Not Found for ${req.url}`);
         res.writeHead(404);
