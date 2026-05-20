@@ -1,16 +1,32 @@
 const http = require('http');
 const os = require('os');
 const { exec } = require('child_process');
+const morgan = require('morgan');
 
 const PORT = 3002;
 
 const runCmd = (cmd) => new Promise(resolve => {
-    exec(cmd, (error, stdout) => resolve(error ? null : stdout.trim()));
+    exec(cmd, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`[DEBUG] Command failed: ${cmd}\nError: ${error.message}\nStderr: ${stderr}`);
+            resolve(null);
+        } else {
+            resolve(stdout.trim());
+        }
+    });
 });
 
-const server = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', 'application/json');
+const logger = morgan('dev');
+
+const server = http.createServer((req, res) => {
+    logger(req, res, async (err) => {
+        if (err) {
+            res.writeHead(500);
+            return res.end('Error');
+        }
+        
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
 
     if (req.url === '/api/vitals') {
         const load = os.loadavg();
@@ -37,6 +53,8 @@ const server = http.createServer(async (req, res) => {
             temp: temp
         };
 
+        console.log(`[DEBUG] Vitals successfully fetched: CPU ${vitals.cpuLoad}% | RAM ${vitals.ramUsed}GB | Temp ${vitals.temp}`);
+
         res.writeHead(200);
         res.end(JSON.stringify(vitals));
     } else if (req.url === '/api/docker') {
@@ -46,6 +64,7 @@ const server = http.createServer(async (req, res) => {
         ]);
 
         if (!statsOut) {
+            console.error(`[DEBUG] /api/docker failed to fetch statsOut`);
             res.writeHead(500);
             return res.end(JSON.stringify({ error: 'Failed to fetch docker stats' }));
         }
@@ -60,16 +79,21 @@ const server = http.createServer(async (req, res) => {
                 stat.Status = psMatch ? psMatch.Status : 'Unknown';
             });
 
+            console.log(`[DEBUG] Docker stats successfully fetched for ${stats.length} containers`);
+
             res.writeHead(200);
             res.end(JSON.stringify(stats));
         } catch (e) {
+            console.error(`[DEBUG] /api/docker JSON parse error: ${e.message}`);
             res.writeHead(500);
             res.end(JSON.stringify({ error: 'Failed to parse docker stats' }));
         }
     } else {
+        console.log(`[DEBUG] 404 Not Found for ${req.url}`);
         res.writeHead(404);
         res.end();
     }
+    });
 });
 
 server.listen(PORT, () => {
