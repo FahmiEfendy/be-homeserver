@@ -2,8 +2,34 @@ const http = require('http');
 const os = require('os');
 const { exec } = require('child_process');
 const morgan = require('morgan');
+const path = require('path');
+const fs = require('fs');
 
 const PORT = 3002;
+
+const CONTAINER_PATHS = {
+    'fe-homeserver': '../fe-homeserver',
+    'be-homeserver': '.',
+    'twc-fe': '../../the-wine-corner/fe-the-wine-corner',
+    'twc-be': '../../the-wine-corner/be-the-wine-corner',
+    'yp-fe': '../../your-places/fe-your-places',
+    'yp-be': '../../your-places/be-your-places'
+};
+
+const getGitBranch = (relativeDir) => {
+    try {
+        const gitHeadPath = path.join(__dirname, relativeDir, '.git', 'HEAD');
+        if (!fs.existsSync(gitHeadPath)) return null;
+        const data = fs.readFileSync(gitHeadPath, 'utf8').trim();
+        if (data.startsWith('ref: refs/heads/')) {
+            return data.replace('ref: refs/heads/', '');
+        } else {
+            return data.substring(0, 7);
+        }
+    } catch (e) {
+        return null;
+    }
+};
 
 const runCmd = (cmd) => new Promise(resolve => {
     exec(cmd, (error, stdout, stderr) => {
@@ -70,16 +96,26 @@ const server = http.createServer((req, res) => {
             }
 
             try {
-                const stats = statsOut.split('\n').filter(Boolean).map(JSON.parse);
-                const psInfo = psOut ? psOut.split('\n').filter(Boolean).map(JSON.parse) : [];
+				const stats = statsOut.split('\n').filter(Boolean).map(JSON.parse);
+				const psInfo = psOut ? psOut.split('\n').filter(Boolean).map(JSON.parse) : [];
 
-                // Merge Status into stats
-                stats.forEach(stat => {
-                    const psMatch = psInfo.find(p => p.Name === stat.Name);
-                    stat.Status = psMatch ? psMatch.Status : 'Unknown';
-                });
+				// Merge Status into stats
+				stats.forEach(stat => {
+					const psMatch = psInfo.find(p => p.Name === stat.Name);
+					stat.Status = psMatch ? psMatch.Status : 'Unknown';
 
-                console.log(`[DEBUG] Docker stats successfully fetched for ${stats.length} containers`);
+					// Attach git branch if it's a public app
+					const nameLower = stat.Name.toLowerCase();
+					const pathKey = Object.keys(CONTAINER_PATHS).find(k => nameLower.includes(k.toLowerCase()));
+					if (pathKey) {
+						const branch = getGitBranch(CONTAINER_PATHS[pathKey]);
+						if (branch) {
+							stat.Branch = branch;
+						}
+					}
+				});
+
+				console.log(`[DEBUG] Docker stats successfully fetched for ${stats.length} containers`);
 
                 res.writeHead(200);
                 res.end(JSON.stringify(stats));
