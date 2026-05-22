@@ -16,17 +16,78 @@ const CONTAINER_PATHS = {
     'yp-be': '../../your-places/be-your-places'
 };
 
-const getGitBranch = (relativeDir) => {
+const COMPONENT_PATHS = {
+    'fe-homeserver': 'homeserver/fe-homeserver',
+    'be-homeserver': 'homeserver/be-homeserver',
+    'twc-fe': 'the-wine-corner/fe-the-wine-corner',
+    'twc-be': 'the-wine-corner/be-the-wine-corner',
+    'yp-fe': 'your-places/fe-your-places',
+    'yp-be': 'your-places/be-your-places'
+};
+
+let hostProjectsRoot = null;
+
+const resolveHostProjectsRoot = async () => {
+    console.log(`[DEBUG] Starting resolveHostProjectsRoot()...`);
+    if (!fs.existsSync('/host')) {
+        console.log(`[DEBUG] /host directory not found. Not running inside a Docker container.`);
+        hostProjectsRoot = ''; // Not in docker
+        return;
+    }
     try {
-        const gitHeadPath = path.join(__dirname, relativeDir, '.git', 'HEAD');
-        if (!fs.existsSync(gitHeadPath)) return null;
-        const data = fs.readFileSync(gitHeadPath, 'utf8').trim();
-        if (data.startsWith('ref: refs/heads/')) {
-            return data.replace('ref: refs/heads/', '');
+        console.log(`[DEBUG] Querying running Docker containers for bind mounts...`);
+        const output = await runCmd("docker inspect $(docker ps -q) --format '{{range .Mounts}}{{.Source}}{{\"\\n\"}}{{end}}' 2>/dev/null");
+        if (output) {
+            console.log(`[DEBUG] Docker inspect mounts output:\n${output}`);
+            const lines = output.split('\n').filter(Boolean);
+            const projectNames = ['homeserver', 'the-wine-corner', 'your-places'];
+            for (const line of lines) {
+                for (const name of projectNames) {
+                    const idx = line.indexOf('/' + name);
+                    if (idx !== -1) {
+                        hostProjectsRoot = line.substring(0, idx);
+                        console.log(`[DEBUG] Detected host projects root: ${hostProjectsRoot}`);
+                        return;
+                    }
+                }
+            }
+            console.log(`[DEBUG] Could not find any project directory pattern in container mounts.`);
         } else {
-            return data.substring(0, 7);
+            console.log(`[DEBUG] No mount outputs returned by docker inspect.`);
         }
     } catch (e) {
+        console.error(`[DEBUG] Failed to resolve host projects root: ${e.message}`);
+    }
+    hostProjectsRoot = ''; // Fallback
+};
+
+const getGitBranch = (key) => {
+    try {
+        let gitHeadPath;
+        if (fs.existsSync('/host')) {
+            gitHeadPath = path.join('/host', hostProjectsRoot || '', COMPONENT_PATHS[key], '.git', 'HEAD');
+        } else {
+            gitHeadPath = path.join(__dirname, CONTAINER_PATHS[key], '.git', 'HEAD');
+        }
+        const exists = fs.existsSync(gitHeadPath);
+        console.log(`[DEBUG] Checking git path for ${key}: ${gitHeadPath} (exists: ${exists})`);
+        if (!exists) {
+            console.log(`[DEBUG] Git path does not exist for ${key}: ${gitHeadPath}`);
+            return null;
+        }
+        const data = fs.readFileSync(gitHeadPath, 'utf8').trim();
+        console.log(`[DEBUG] Raw HEAD content for ${key}: "${data}"`);
+        if (data.startsWith('ref: refs/heads/')) {
+            const branch = data.replace('ref: refs/heads/', '');
+            console.log(`[DEBUG] Resolved branch for ${key}: "${branch}"`);
+            return branch;
+        } else {
+            const branch = data.substring(0, 7);
+            console.log(`[DEBUG] Resolved branch commit hash for ${key}: "${branch}"`);
+            return branch;
+        }
+    } catch (e) {
+        console.error(`[DEBUG] Error reading git branch for ${key}: ${e.message}`);
         return null;
     }
 };
@@ -84,13 +145,18 @@ const server = http.createServer((req, res) => {
             res.writeHead(200);
             res.end(JSON.stringify(vitals));
         } else if (req.url === '/docker') {
+            console.log(`[DEBUG] GET /docker requested. Current cached hostProjectsRoot: "${hostProjectsRoot}"`);
+            if (hostProjectsRoot === null) {
+                await resolveHostProjectsRoot();
+            }
+
             const [statsOut, psOut] = await Promise.all([
                 runCmd("docker stats --no-stream --format '{{json .}}'"),
                 runCmd("docker ps -a --format '{\"Name\":\"{{.Names}}\", \"Status\":\"{{.Status}}\"}'")
             ]);
 
             if (!statsOut) {
-                console.error(`[DEBUG] /api/docker failed to fetch statsOut`);
+                console.error(`[DEBUG] /api/docker failed to fetch statsOut (docker daemon might be stopped or command failed)`);
                 res.writeHead(500);
                 return res.end(JSON.stringify({ error: 'Failed to fetch docker stats' }));
             }
@@ -108,7 +174,7 @@ const server = http.createServer((req, res) => {
 					const nameLower = stat.Name.toLowerCase();
 					const pathKey = Object.keys(CONTAINER_PATHS).find(k => nameLower.includes(k.toLowerCase()));
 					if (pathKey) {
-						const branch = getGitBranch(CONTAINER_PATHS[pathKey]);
+						const branch = getGitBranch(pathKey);
 						if (branch) {
 							stat.Branch = branch;
 						}
