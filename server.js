@@ -8,8 +8,8 @@ const fs = require('fs');
 const PORT = 3002;
 
 const CONTAINER_PATHS = {
-    'fe-homeserver': '../fe-homeserver',
-    'be-homeserver': '.',
+    'homeserver-fe': '../fe-homeserver',
+    'homeserver-be': '.',
     'twc-fe': '../../the-wine-corner/fe-the-wine-corner',
     'twc-be': '../../the-wine-corner/be-the-wine-corner',
     'yp-fe': '../../your-places/fe-your-places',
